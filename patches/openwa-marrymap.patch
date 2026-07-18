@@ -1,0 +1,216 @@
+diff --git a/src/engine/adapters/whatsapp-web-js.adapter.ts b/src/engine/adapters/whatsapp-web-js.adapter.ts
+index d322600..3270ee8 100644
+--- a/src/engine/adapters/whatsapp-web-js.adapter.ts
++++ b/src/engine/adapters/whatsapp-web-js.adapter.ts
+@@ -53,7 +53,7 @@ import {
+   WwjsChannelData,
+   GroupCreateResult,
+ } from '../types/whatsapp-web-js.types';
+-import { buildIncomingMessageBase, mapContactFields } from './message-mapper';
++import { buildIncomingMessageBase, mapContactFields, mapWwebjsMessageType } from './message-mapper';
+ import { buildVCard } from './vcard';
+ import {
+   capInboundMedia,
+@@ -1607,9 +1607,182 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
+ 
+   // ========== Gap Quick Wins Implementation ==========
+ 
++  /**
++   * Read the already-cached chat list directly when whatsapp-web.js's richer
++   * model serializer fails after a WhatsApp Web rollout. The normal client API
++   * remains the first choice; this is a small, read-only compatibility path so
++   * one malformed chat cannot make the entire inbox unavailable.
++   */
++  private async getCachedChats(): Promise<ChatSummary[]> {
++    const page = (
++      this.client as unknown as {
++        pupPage?: {
++          evaluate: <T>(fn: () => T) => Promise<T>;
++        };
++      }
++    ).pupPage;
++    if (!page) return [];
++
++    return page.evaluate(() => {
++      type ChatRecord = {
++        id?: { _serialized?: unknown };
++        formattedTitle?: unknown;
++        name?: unknown;
++        groupMetadata?: unknown;
++        unreadCount?: unknown;
++        timestamp?: unknown;
++        t?: unknown;
++        lastReceivedKey?: { _serialized?: unknown };
++        lastMessage?: { body?: unknown; type?: unknown } | null;
++      };
++      const waWindow = window as unknown as {
++        require?: (moduleName: string) => {
++          Chat?: { getModelsArray?: () => unknown[] };
++          Msg?: { get?: (id: string) => { body?: unknown } | undefined };
++        };
++      };
++      const collections = waWindow.require?.('WAWebCollections');
++      const chats = collections?.Chat?.getModelsArray?.() ?? [];
++
++      return chats.flatMap(rawChat => {
++        try {
++          const chat = rawChat as ChatRecord;
++          const id = typeof chat.id?._serialized === 'string' ? chat.id._serialized : null;
++          if (!id) return [];
++          const name =
++            typeof chat.formattedTitle === 'string'
++              ? chat.formattedTitle
++              : typeof chat.name === 'string'
++                ? chat.name
++                : id;
++          const timestamp =
++            typeof chat.timestamp === 'number' ? chat.timestamp : typeof chat.t === 'number' ? chat.t : 0;
++          const cachedLastBody =
++            typeof chat.lastReceivedKey?._serialized === 'string'
++              ? collections?.Msg?.get?.(chat.lastReceivedKey._serialized)?.body
++              : undefined;
++          return [
++            {
++              id,
++              name,
++              isGroup: Boolean(chat.groupMetadata),
++              unreadCount: typeof chat.unreadCount === 'number' ? chat.unreadCount : 0,
++              timestamp,
++              lastMessage:
++                typeof chat.lastMessage?.body === 'string'
++                  ? chat.lastMessage.body
++                  : typeof cachedLastBody === 'string'
++                    ? cachedLastBody
++                    : undefined,
++            },
++          ];
++        } catch {
++          return [];
++        }
++      });
++    });
++  }
++
++  /** Read messages already cached by WhatsApp Web without invoking its brittle model serializer. */
++  private async getCachedChatHistory(chatId: string, limit: number): Promise<IncomingMessage[]> {
++    const page = (
++      this.client as unknown as {
++        pupPage?: {
++          evaluate: <T, Args extends unknown[]>(fn: (...args: Args) => T, ...args: Args) => Promise<T>;
++        };
++      }
++    ).pupPage;
++    if (!page) return [];
++
++    const cached = await page.evaluate(
++      (targetChatId: string, maxMessages: number) => {
++        type ChatRecord = {
++          id?: { _serialized?: unknown };
++          msgs?: { getModelsArray?: () => unknown[] };
++        };
++        type MessageRecord = {
++          id?: { _serialized?: unknown; fromMe?: unknown; remote?: unknown };
++          from?: unknown;
++          to?: unknown;
++          body?: unknown;
++          type?: unknown;
++          timestamp?: unknown;
++          t?: unknown;
++          author?: unknown;
++        };
++        const waWindow = window as unknown as {
++          require?: (moduleName: string) => {
++            Chat?: { getModelsArray?: () => unknown[] };
++            Msg?: { getModelsArray?: () => unknown[] };
++          };
++        };
++        const collections = waWindow.require?.('WAWebCollections');
++        const chats = collections?.Chat?.getModelsArray?.() ?? [];
++        const chat = chats.find(rawChat => (rawChat as ChatRecord).id?._serialized === targetChatId) as
++          ChatRecord | undefined;
++        const messages =
++          chat?.msgs?.getModelsArray?.() ??
++          (collections?.Msg?.getModelsArray?.() ?? []).filter(rawMessage => {
++            const remote = (rawMessage as MessageRecord).id?.remote;
++            return (
++              remote === targetChatId || (remote as { _serialized?: unknown } | undefined)?._serialized === targetChatId
++            );
++          });
++
++        return messages.slice(-maxMessages).flatMap(rawMessage => {
++          try {
++            const message = rawMessage as MessageRecord;
++            const id = typeof message.id?._serialized === 'string' ? message.id._serialized : null;
++            if (!id) return [];
++            return [
++              {
++                id,
++                from: typeof message.from === 'string' ? message.from : targetChatId,
++                to: typeof message.to === 'string' ? message.to : targetChatId,
++                body: typeof message.body === 'string' ? message.body : '',
++                type: typeof message.type === 'string' ? message.type : 'chat',
++                timestamp:
++                  typeof message.timestamp === 'number'
++                    ? message.timestamp
++                    : typeof message.t === 'number'
++                      ? message.t
++                      : 0,
++                fromMe: message.id?.fromMe === true,
++                author: typeof message.author === 'string' ? message.author : undefined,
++              },
++            ];
++          } catch {
++            return [];
++          }
++        });
++      },
++      chatId,
++      limit,
++    );
++
++    return cached.map(message => ({
++      ...message,
++      type: mapWwebjsMessageType(message.type),
++      chatId,
++      isGroup: chatId.endsWith('@g.us'),
++      isStatusBroadcast: chatId === 'status@broadcast',
++    }));
++  }
++
+   async getChatHistory(chatId: string, limit: number = 50, includeMedia: boolean = false): Promise<IncomingMessage[]> {
+     this.ensureReady();
+-    const chat = await this.client!.getChatById(chatId);
++    let chat: Awaited<ReturnType<Client['getChatById']>>;
++    try {
++      chat = await this.client!.getChatById(chatId);
++    } catch (error) {
++      const cached = await this.getCachedChatHistory(chatId, limit).catch(() => []);
++      if (cached.length > 0) {
++        this.logger.warn(`Used cached WhatsApp history for ${chatId} after model read failed`);
++        return cached;
++      }
++      throw error;
++    }
++    if (!chat) return [];
+     const messages = await chat.fetchMessages({ limit });
+     const results: IncomingMessage[] = [];
+     for (const msg of messages) {
+@@ -1890,7 +2063,17 @@ export class WhatsAppWebJsAdapter extends EventEmitter implements IWhatsAppEngin
+ 
+   async getChats(): Promise<ChatSummary[]> {
+     this.ensureReady();
+-    const chats = await this.client!.getChats();
++    let chats: Awaited<ReturnType<Client['getChats']>>;
++    try {
++      chats = await this.client!.getChats();
++    } catch (error) {
++      const cached = await this.getCachedChats().catch(() => []);
++      if (cached.length > 0) {
++        this.logger.warn(`Used ${cached.length} cached WhatsApp chat(s) after model read failed`);
++        return cached;
++      }
++      throw error;
++    }
+     const summaries: ChatSummary[] = [];
+     let skipped = 0;
+ 

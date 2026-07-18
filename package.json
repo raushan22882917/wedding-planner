@@ -1,0 +1,25 @@
+{
+  "name": "marrymap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MarryMap's web application and search API.",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev:web": "npm run dev --workspace=@marrymap/web",
+    "dev:api": "npm run dev --workspace=@marrymap/api",
+    "whatsapp:gateway": "npm --prefix apps/openwa run start:dev",
+    "whatsapp:gateway:logs": "echo 'OpenWA logs are shown in the terminal running npm run whatsapp:gateway.'",
+    "whatsapp:gateway:down": "echo 'Press Ctrl+C in the terminal running npm run whatsapp:gateway to stop the local gateway.'",
+    "build": "npm run build --workspace=@marrymap/web && npm run build --workspace=@marrymap/api",
+    "typecheck": "npm run typecheck --workspace=@marrymap/web && npm run typecheck --workspace=@marrymap/api",
+    "lint": "npm run lint --workspace=@marrymap/web",
+    "test": "npm run test --workspace=@marrymap/api",
+    "format": "npm run format --workspace=@marrymap/web"
+  }
+}

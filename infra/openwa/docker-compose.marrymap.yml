@@ -1,0 +1,4 @@
+services:
+  openwa:
+    ports:
+      - "127.0.0.1:2785:2785"

@@ -1,0 +1,60 @@
+# Dependencies and package-manager caches
+node_modules/
+.pnp/
+.pnp.*
+.npm/
+.pnpm-store/
+.yarn/
+
+# Generated builds, test reports, and framework caches
+dist/
+build/
+.output/
+.vinxi/
+.nitro/
+.tanstack/
+.turbo/
+.cache/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Local Supabase CLI state (migrations and config remain tracked)
+**/supabase/.branches/
+**/supabase/.temp/
+
+# Local environment settings and secrets
+.env
+.env.*
+!.env.example
+!.env.minimal
+!.env.*.example
+
+# Local OpenWA sessions, message databases, and browser cache
+apps/openwa/data/
+apps/openwa/media/
+apps/openwa/uploads/
+apps/openwa/.wwebjs_auth/
+apps/openwa/.wwebjs_cache/
+
+# Deployment tooling
+.vercel/
+.netlify/
+.wrangler/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS and editor files
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.idea/
+.vscode/
+*.swp
+*.swo
