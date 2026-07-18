@@ -1,7 +1,11 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+
+// Load environment variables from monorepo root first, falling back to local directory
+dotenv.config({ path: resolve(process.cwd(), "../../.env") });
+dotenv.config();
 
 const boolean = z
   .enum(["true", "false"])

@@ -11,6 +11,7 @@
     "node": ">=20.11"
   },
   "scripts": {
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev --workspace=@marrymap/web",
     "dev:api": "npm run dev --workspace=@marrymap/api",
     "whatsapp:gateway": "npm --prefix apps/openwa run start:dev",
@@ -21,5 +22,8 @@
     "lint": "npm run lint --workspace=@marrymap/web",
     "test": "npm run test --workspace=@marrymap/api",
     "format": "npm run format --workspace=@marrymap/web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
   }
 }
