@@ -53,6 +53,13 @@ resource "google_service_account" "web_sa" {
   display_name = "Service Account for MarryMap Web Cloud Run"
 }
 
+# Service Account for OpenWA
+resource "google_service_account" "openwa_sa" {
+  depends_on   = [google_project_service.services]
+  account_id   = "marrymap-openwa-sa"
+  display_name = "Service Account for MarryMap OpenWA Cloud Run"
+}
+
 # Cloud Run Service for API
 resource "google_cloud_run_v2_service" "api_service" {
   name     = "marrymap-api"
@@ -101,6 +108,71 @@ resource "google_cloud_run_v2_service" "api_service" {
       env {
         name  = "CORS_ORIGINS"
         value = "*"
+      }
+      env {
+        name  = "OPENWA_BASE_URL"
+        value = google_cloud_run_v2_service.openwa_service.uri
+      }
+      env {
+        name  = "OPENWA_API_KEY"
+        value = var.openwa_api_key
+      }
+      env {
+        name  = "OPENWA_USE_LOCAL_GATEWAY"
+        value = "false"
+      }
+    }
+  }
+
+  depends_on = [
+    google_artifact_registry_repository.marrymap_repo,
+    google_project_service.services,
+    google_cloud_run_v2_service.openwa_service
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image
+    ]
+  }
+}
+
+# Cloud Run Service for OpenWA Gateway
+resource "google_cloud_run_v2_service" "openwa_service" {
+  name     = "marrymap-openwa"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account = google_service_account.openwa_sa.email
+    execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+
+    containers {
+      image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.marrymap_repo.repository_id}/marrymap-openwa:latest"
+
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "2Gi"
+        }
+        cpu_idle = false
+      }
+
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "PORT"
+        value = "8080"
+      }
+      env {
+        name  = "API_MASTER_KEY"
+        value = var.openwa_api_key
       }
     }
   }
@@ -215,6 +287,13 @@ resource "google_cloud_run_v2_service_iam_member" "api_public_access" {
 resource "google_cloud_run_v2_service_iam_member" "web_public_access" {
   name     = google_cloud_run_v2_service.web_service.name
   location = google_cloud_run_v2_service.web_service.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "openwa_public_access" {
+  name     = google_cloud_run_v2_service.openwa_service.name
+  location = google_cloud_run_v2_service.openwa_service.location
   role     = "roles/run.invoker"
   member   = "allUsers"
 }

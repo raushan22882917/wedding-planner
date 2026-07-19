@@ -65,3 +65,11 @@ variable "razorpay_webhook_secret" {
   sensitive   = true
   default     = ""
 }
+
+# OpenWA Configuration
+variable "openwa_api_key" {
+  description = "Private API key for authenticating with the OpenWA gateway (sensitive)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

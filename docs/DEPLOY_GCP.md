@@ -1,6 +1,6 @@
 # Google Cloud Platform Deployment Guide
 
-This guide walks you through deploying the MarryMap monorepo application to **Google Cloud Platform (GCP)** using **Google Cloud Run** and **Artifact Registry**.
+This guide walks you through deploying the MarryMap monorepo applications to **Google Cloud Platform (GCP)** using **Google Cloud Run** and **Artifact Registry**.
 
 ---
 
@@ -8,8 +8,18 @@ This guide walks you through deploying the MarryMap monorepo application to **Go
 
 - **MarryMap Web Frontend (`apps/web`):** Containerized TanStack Start SSR application running on Cloud Run.
 - **MarryMap Search & Fetch API (`apps/api`):** Containerized Fastify application running on Cloud Run.
-- **Artifact Registry:** Hosts the Docker images for both applications.
+- **MarryMap OpenWA Gateway (`apps/openwa`):** NestJS API/dashboard serving as the WhatsApp Web automation server.
+- **Artifact Registry:** Hosts the Docker images for all three applications.
 - **Database & Auth:** Provided by your external **Supabase** instance.
+
+---
+
+## OpenWA Cloud Run Requirements
+
+Due to WhatsApp Web's automation running Chromium (Puppeteer), the `marrymap-openwa` container has strict Cloud Run limits:
+1. **Always-On CPU:** The service must be deployed with `--no-cpu-throttling` (`cpu_idle = false` in Terraform). If CPU is only allocated during request processing, the WebSocket connection with WhatsApp will drop when the app is idle.
+2. **Resource Limits:** Minimum `2 vCPUs` and `2GiB` memory limits are configured to prevent Chromium out-of-memory crashes.
+3. **Execution Environment:** Set to `gen2` to support the full Linux syscall set required by Chromium sandboxing.
 
 ---
 
@@ -30,19 +40,17 @@ This guide walks you through deploying the MarryMap monorepo application to **Go
 We provide a deployment script at [deploy.sh](file:///Users/raushankumar/Documents/wedding-planner/infra/gcp/deploy.sh) that:
 1. Enables necessary Google Cloud APIs.
 2. Creates an Artifact Registry repository.
-3. Builds both application images locally or via Cloud Build.
-4. Reads configurations from your local `.env` files (`apps/api/.env` and `apps/web/.env`) and configures them as environment variables on Cloud Run.
-5. Dynamically captures the deployed API service URL and assigns it as `SEARCH_BACKEND_URL` for the Web frontend.
+3. Builds the OpenWA, API, and Web client container images via Cloud Build.
+4. Deploys the `marrymap-openwa` service with 2 vCPUs, 2GiB RAM, execution environment `gen2`, and disabled CPU throttling.
+5. Captures the deployed OpenWA URL and deploys the `marrymap-api` service, linking the URL and key configuration.
+6. Captures the API URL and deploys the `marrymap-web` frontend service.
 
 ### Steps:
 
 1. **Verify your local environment files:**
-   Ensure you have setup:
-   - `apps/api/.env` (contains `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, etc.)
-   - `apps/web/.env` (contains `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, etc.)
-
+   Ensure you have setup `.env` in the monorepo root containing keys like `SUPABASE_URL` and `OPENWA_API_KEY`.
 2. **Execute the script:**
-   Ensure you run the script from the repository root:
+   Run from the repository root:
    ```bash
    ./infra/gcp/deploy.sh
    ```
@@ -58,9 +66,8 @@ For professional infrastructure management, we check-in Terraform files under [i
 ### Steps:
 
 1. **Prepare Docker Images:**
-   Terraform configures Cloud Run, but expects the images to exist in the registry. Build and push them using Cloud Build or your CI/CD runner first:
+   Build and push the three images to your Artifact Registry repository first:
    ```bash
-   # Set environment variables
    PROJECT_ID="your-gcp-project-id"
    REGION="us-central1"
    REPO_NAME="marrymap"
@@ -73,7 +80,8 @@ For professional infrastructure management, we check-in Terraform files under [i
        --repository-format=docker \
        --location=$REGION
    
-   # Build API and Web images
+   # Build images
+   gcloud builds submit --tag ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/marrymap-openwa:latest apps/openwa
    gcloud builds submit --tag ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/marrymap-api:latest apps/api
    gcloud builds submit --tag ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/marrymap-web:latest --file apps/web/Dockerfile .
    ```
@@ -87,6 +95,7 @@ For professional infrastructure management, we check-in Terraform files under [i
    supabase_service_role_key = "your-supabase-service-role-key"
    supabase_project_id       = "your-supabase-project-id"
    supabase_publishable_key  = "your-supabase-anon-key"
+   openwa_api_key            = "your-secure-openwa-token"
    gemini_api_key            = "your-gemini-key" # Optional
    ```
 
@@ -105,7 +114,7 @@ For professional infrastructure management, we check-in Terraform files under [i
 ### 1. Configure CORS
 Once the Web frontend URL is generated (e.g. `https://marrymap-web-xxxxx-uc.a.run.app`), update the **CORS** configurations:
 - **API Cloud Run Service:** Update the `CORS_ORIGINS` environment variable to include your Web App URL.
-- **Supabase Console:** Update your Supabase Auth allowed redirect URLs to include your Web App URL to ensure authentication redirects work correctly.
+- **Supabase Console:** Update your Supabase Auth allowed redirect URLs to include your Web App URL.
 
 ### 2. Custom Domains (Optional)
 Cloud Run allows you to map custom domains directly to your services.
