@@ -52,8 +52,9 @@ export const Route = createFileRoute("/api/billing/razorpay")({
     handlers: {
       POST: async ({ request }) => {
         const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const cleanEnvVar = (val: string | undefined) => val ? val.replace(/^["']|["']$/g, "") : val;
+        const supabaseUrl = cleanEnvVar(process.env.SUPABASE_URL);
+        const serviceRoleKey = cleanEnvVar(process.env.SUPABASE_SERVICE_ROLE_KEY);
         if (!secret || !supabaseUrl || !serviceRoleKey) {
           return new Response("Billing webhook is not configured.", { status: 503 });
         }

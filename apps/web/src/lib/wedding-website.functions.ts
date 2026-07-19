@@ -32,8 +32,9 @@ export type WeddingWebsiteCopyField = "title" | "welcome_message" | "couple_stor
 export type WebsiteCustomRequestStatus = "new" | "in_review" | "in_progress" | "completed";
 
 function publicClient() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY;
+  const cleanEnvVar = (val: string | undefined) => val ? val.replace(/^["']|["']$/g, "") : val;
+  const url = cleanEnvVar(process.env.SUPABASE_URL);
+  const key = cleanEnvVar(process.env.SUPABASE_PUBLISHABLE_KEY);
   if (!url || !key) throw new Error("Wedding website service is not configured.");
   return createClient<Database>(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },

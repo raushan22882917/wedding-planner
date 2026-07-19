@@ -88,8 +88,9 @@ When the user explicitly asks to send a WhatsApp message to a named source-backe
 
 async function workspaceContext(authorization: string) {
   const token = authorization.replace(/^Bearer\s+/i, "").trim();
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY;
+  const cleanEnvVar = (val: string | undefined) => val ? val.replace(/^["']|["']$/g, "") : val;
+  const url = cleanEnvVar(process.env.SUPABASE_URL);
+  const key = cleanEnvVar(process.env.SUPABASE_PUBLISHABLE_KEY);
   if (!url || !key || !token) return "Wedding workspace snapshot: unavailable for this reply.";
 
   try {
@@ -177,8 +178,9 @@ function recentChatHistory(messages: UIMessage[]) {
 }
 
 async function consumeQuota(authorization: string, feature: SubscriptionFeature, units = 1) {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY;
+  const cleanEnvVar = (val: string | undefined) => val ? val.replace(/^["']|["']$/g, "") : val;
+  const url = cleanEnvVar(process.env.SUPABASE_URL);
+  const key = cleanEnvVar(process.env.SUPABASE_PUBLISHABLE_KEY);
   if (!url || !key) throw new Error("Subscription checks are not configured.");
   const supabase = createClient<Database>(url, key, {
     global: { headers: { Authorization: authorization } },

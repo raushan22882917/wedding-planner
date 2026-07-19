@@ -30,8 +30,9 @@ function razorpayCredentials() {
 }
 
 function billingStore() {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const cleanEnvVar = (val: string | undefined) => val ? val.replace(/^["']|["']$/g, "") : val;
+  const url = cleanEnvVar(process.env.SUPABASE_URL);
+  const serviceRoleKey = cleanEnvVar(process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!url || !serviceRoleKey) {
     throw new Error(
       "Secure checkout is not configured yet. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to the server environment.",
