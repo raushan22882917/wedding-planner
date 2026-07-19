@@ -7,8 +7,8 @@ set -e
 REGION="${GCP_REGION:-us-central1}"
 REPO_NAME="marrymap"
 OPENWA_SERVICE_NAME="marrymap-openwa"
-API_SERVICE_NAME="marrymap-api"
-WEB_SERVICE_NAME="marrymap-web"
+API_SERVICE_NAME="wedding-planner-api"
+WEB_SERVICE_NAME="wedding-planner-git"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -102,7 +102,7 @@ gcloud run deploy "$OPENWA_SERVICE_NAME" \
     --cpu 2 \
     --memory 2Gi \
     --execution-environment gen2 \
-    --set-env-vars "API_MASTER_KEY=${OPENWA_API_KEY},NODE_ENV=production,PORT=8080"
+    --set-env-vars "API_MASTER_KEY=${OPENWA_API_KEY},NODE_ENV=production"
 
 OPENWA_URL=$(gcloud run services describe "$OPENWA_SERVICE_NAME" --region="$REGION" --format='value(status.url)')
 echo -e "${GREEN}OpenWA successfully deployed to: ${YELLOW}$OPENWA_URL${NC}"
