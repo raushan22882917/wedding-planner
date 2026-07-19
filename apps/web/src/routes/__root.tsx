@@ -109,10 +109,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: ReactNode }) {
+  const env = {
+    VITE_SUPABASE_URL: typeof window === "undefined" ? (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) : undefined,
+    VITE_SUPABASE_PUBLISHABLE_KEY: typeof window === "undefined" ? (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY) : undefined,
+  };
+
   return (
     <html lang="en">
       <head>
         <HeadContent />
+        <script
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{
+            __html: `if (!window.ENV) window.ENV = ${JSON.stringify(env)};`,
+          }}
+        />
       </head>
       <body>
         {children}
