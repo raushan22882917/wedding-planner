@@ -1,3 +1,16 @@
+diff --git a/Dockerfile b/Dockerfile
+index a7091e3..eb6e64f 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -9,7 +9,7 @@
+ # minifier) optional dependency fails to install ("Cannot find module lightningcss.linux-arm64-gnu.node").
+ # The per-arch runtime deps are installed natively in the target-platform production stage below.
+ # NOTE: $BUILDPLATFORM requires BuildKit (CI uses buildx; modern `docker build`/compose default to it).
+-FROM --platform=$BUILDPLATFORM docker.io/node:22-slim AS builder
++FROM docker.io/node:22-slim AS builder
+ 
+ WORKDIR /app
+ 
 diff --git a/docker-entrypoint.sh b/docker-entrypoint.sh
 index 78db860..6f9e23e 100644
 --- a/docker-entrypoint.sh
