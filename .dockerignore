@@ -1,0 +1,11 @@
+node_modules
+.git
+.github
+apps/web/node_modules
+apps/api/node_modules
+apps/openwa/node_modules
+.output
+dist
+.env
+.env.local
+.DS_Store
