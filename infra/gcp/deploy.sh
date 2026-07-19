@@ -93,12 +93,16 @@ if [ -z "$OPENWA_API_KEY" ]; then
     OPENWA_API_KEY=$(openssl rand -hex 32)
 fi
 
+# A single linked WhatsApp account owns live WebSocket/Chromium state. Do not
+# let Cloud Run route requests to a second independent session store.
 gcloud run deploy "$OPENWA_SERVICE_NAME" \
     --image "$OPENWA_IMAGE" \
     --region "$REGION" \
     --platform managed \
     --allow-unauthenticated \
     --no-cpu-throttling \
+    --min-instances 1 \
+    --max-instances 1 \
     --cpu 2 \
     --memory 2Gi \
     --execution-environment gen2 \
@@ -106,6 +110,7 @@ gcloud run deploy "$OPENWA_SERVICE_NAME" \
 
 OPENWA_URL=$(gcloud run services describe "$OPENWA_SERVICE_NAME" --region="$REGION" --format='value(status.url)')
 echo -e "${GREEN}OpenWA successfully deployed to: ${YELLOW}$OPENWA_URL${NC}"
+echo -e "${YELLOW}OpenWA is pinned to one warm instance. For durable sessions across a revision or instance replacement, host OpenWA on persistent POSIX storage (for example a VM persistent disk or Filestore); Cloud Run's container filesystem is ephemeral.${NC}"
 
 # 7. Deploy API to Cloud Run
 echo -e "\n${BLUE}[5/6] Deploying API to Cloud Run...${NC}"

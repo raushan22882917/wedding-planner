@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 export type WhatsAppGatewayStatus = {
   configured: boolean;
   reachable: boolean;
+  connectionMissing: boolean;
   sessionReady: boolean | null;
   sessionStatus: string | null;
   message: string;
@@ -89,6 +90,7 @@ export type DograhVoiceStatus = {
 const unavailableGateway: WhatsAppGatewayStatus = {
   configured: false,
   reachable: false,
+  connectionMissing: false,
   sessionReady: false,
   sessionStatus: null,
   message: "OpenWA is not configured. You can still open WhatsApp directly.",

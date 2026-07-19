@@ -33,6 +33,12 @@ export type OpenwaConnection = {
 export type OpenwaGatewayStatus = {
   configured: boolean;
   reachable: boolean;
+  /**
+   * The gateway is online, but its persisted session disappeared. This can
+   * happen after a gateway replacement and is safe to repair by creating a
+   * fresh, owner-scoped QR session.
+   */
+  connectionMissing: boolean;
   sessionReady: boolean | null;
   sessionStatus: string | null;
   message: string;
@@ -365,6 +371,7 @@ function statusForSession(session: OpenwaSession): OpenwaGatewayStatus {
   return {
     configured: true,
     reachable: true,
+    connectionMissing: false,
     sessionReady: sessionReady(session.status),
     sessionStatus: session.status,
     message: sessionMessage(session.status, session.lastError),
@@ -383,6 +390,7 @@ export async function getOpenwaStatus(
     return {
       configured: false,
       reachable: false,
+      connectionMissing: false,
       sessionReady: false,
       sessionStatus: null,
       message:
@@ -399,6 +407,7 @@ export async function getOpenwaStatus(
       return {
         configured: true,
         reachable: false,
+        connectionMissing: false,
         sessionReady: false,
         sessionStatus: null,
         message:
@@ -411,6 +420,7 @@ export async function getOpenwaStatus(
     return {
       configured: true,
       reachable: true,
+      connectionMissing: false,
       sessionReady: false,
       sessionStatus: null,
       message:
@@ -424,11 +434,17 @@ export async function getOpenwaStatus(
       await updateSessionFromGateway(ownerId, connection.session_id),
     );
   } catch (error) {
+    const connectionMissing =
+      error instanceof AppError && error.code === "openwa_session_not_found";
     return {
       configured: true,
-      reachable: false,
+      // A 404 for this owner's session proves the gateway answered the
+      // request. Treat it as a recoverable missing session rather than a
+      // gateway outage so the UI can offer Reconnect WhatsApp immediately.
+      reachable: connectionMissing,
+      connectionMissing,
       sessionReady: false,
-      sessionStatus: connection.status,
+      sessionStatus: connectionMissing ? "missing" : connection.status,
       message:
         error instanceof Error ? error.message : "OpenWA could not be reached.",
       connection: connectionFrom(connection),

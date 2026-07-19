@@ -134,6 +134,10 @@ function MessagesPage() {
   const [workspace, setWorkspace] = useState<"messages" | "calls">("messages");
   const [peopleLimit, setPeopleLimit] = useState(50);
   const [qrOpen, setQrOpen] = useState(false);
+  // Keep the session returned by Connect WhatsApp until the QR dialog closes.
+  // This prevents a stale gateway-status cache from requesting a QR code for a
+  // deleted session after the API has already created its replacement.
+  const [qrSessionId, setQrSessionId] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
 
   const vendorsQuery = useQuery({ queryKey: ["vendors"], queryFn: () => listFn() });
@@ -156,9 +160,11 @@ function MessagesPage() {
 
   const connect = useMutation({
     mutationFn: () => connectFn({ data: undefined }),
-    onSuccess: async () => {
-      await gatewayQuery.refetch();
-      setQrOpen(true);
+    onSuccess: (connection) => {
+      queryClient.setQueryData(["whatsapp-gateway"], connection);
+      setQrSessionId(connection.connection?.sessionId ?? null);
+      setQrOpen(Boolean(connection.connection));
+      void gatewayQuery.refetch();
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -192,8 +198,13 @@ function MessagesPage() {
   const openwaReady = Boolean(
     gateway?.configured && gateway.reachable && gateway.sessionReady !== false,
   );
+  const connectionMissing = Boolean(gateway?.connectionMissing);
   const gatewayNeedsAttention = Boolean(gateway?.configured && !openwaReady);
-  const gatewayUnavailable = Boolean(gateway?.configured && !gateway.reachable);
+  const gatewayUnavailable = Boolean(
+    gateway?.configured && !gateway.reachable && !connectionMissing,
+  );
+  const activeQrSessionId = qrSessionId ?? gateway?.connection?.sessionId ?? null;
+  const qrGatewayReachable = Boolean(qrSessionId || gateway?.reachable);
   const contactsQuery = useQuery({
     queryKey: ["whatsapp-contacts", gateway?.connection?.sessionId],
     queryFn: () => contactsFn(),
@@ -305,19 +316,28 @@ function MessagesPage() {
   const connectionLabel = openwaReady
     ? "WhatsApp connected"
     : gateway?.configured
-      ? gatewayUnavailable
+      ? connectionMissing
+        ? "Reconnect WhatsApp"
+        : gatewayUnavailable
         ? "WhatsApp unavailable"
         : gateway?.connection
           ? "Continue WhatsApp setup"
           : "Connect WhatsApp"
       : "Set up WhatsApp";
   const connectionAction = () => {
-    if (!gateway?.configured || gatewayUnavailable) {
+    if (!gateway?.configured) {
       setSetupOpen(true);
       return;
     }
-    if (gateway?.connection && !openwaReady) {
-      setQrOpen(true);
+    // The API has confirmed that the gateway is online but the old session is
+    // gone. connectOpenwa replaces the stale owner mapping and opens a fresh
+    // QR code; showing the old QR would only repeat the 404.
+    if (connectionMissing) {
+      connect.mutate();
+      return;
+    }
+    if (gatewayUnavailable) {
+      setSetupOpen(true);
       return;
     }
     if (!openwaReady) connect.mutate();
@@ -330,12 +350,12 @@ function MessagesPage() {
     refetchInterval: openwaReady ? 15_000 : false,
   });
   const qrQuery = useQuery({
-    queryKey: ["whatsapp-qr", gateway?.connection?.sessionId],
+    queryKey: ["whatsapp-qr", activeQrSessionId],
     queryFn: () => qrFn(),
-    enabled: qrOpen && Boolean(gateway?.connection && gateway.reachable),
+    enabled: qrOpen && Boolean(activeQrSessionId && qrGatewayReachable),
     staleTime: 0,
     retry: 1,
-    refetchInterval: qrOpen && gateway?.reachable ? 3_000 : false,
+    refetchInterval: qrOpen && qrGatewayReachable ? 3_000 : false,
   });
   const conversation = useMemo(
     () =>
@@ -1091,16 +1111,12 @@ function MessagesPage() {
                           <Button
                             type="button"
                             size="sm"
-                            onClick={() => {
-                              if (gateway.reachable) {
-                                setQrOpen(true);
-                              } else {
-                                setSetupOpen(true);
-                              }
-                            }}
+                            onClick={connectionAction}
+                            disabled={connect.isPending}
                             className="h-11"
                           >
-                            Show QR
+                            {connect.isPending && <LoaderCircle className="animate-spin" />}
+                            {connectionMissing ? "Reconnect" : "Show QR"}
                           </Button>
                         ) : null}
                         <Button
@@ -1207,7 +1223,13 @@ function MessagesPage() {
           )}
         </div>
       )}
-      <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+      <Dialog
+        open={qrOpen}
+        onOpenChange={(open) => {
+          setQrOpen(open);
+          if (!open) setQrSessionId(null);
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Connect WhatsApp</DialogTitle>
@@ -1217,7 +1239,7 @@ function MessagesPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid min-h-64 place-items-center rounded-xl bg-secondary/60 p-5">
-            {!gateway?.reachable ? (
+            {!qrGatewayReachable ? (
               <div className="max-w-xs text-center text-sm text-muted-foreground">
                 <CircleAlert className="mx-auto mb-3 h-7 w-7 text-amber-700" />
                 OpenWA is not reachable yet. Start the gateway, then check the connection again.
@@ -1236,11 +1258,11 @@ function MessagesPage() {
                   variant="outline"
                   size="sm"
                   className="mt-4"
-                  onClick={() => void qrQuery.refetch()}
-                  disabled={qrQuery.isFetching}
+                  onClick={() => connect.mutate()}
+                  disabled={connect.isPending}
                 >
-                  {qrQuery.isFetching && <LoaderCircle className="animate-spin" />}
-                  Try again
+                  {connect.isPending && <LoaderCircle className="animate-spin" />}
+                  Reconnect WhatsApp
                 </Button>
               </div>
             ) : qrQuery.isLoading || !qrQuery.data ? (
@@ -1271,7 +1293,7 @@ function MessagesPage() {
               type="button"
               variant="outline"
               onClick={() => void qrQuery.refetch()}
-              disabled={qrQuery.isFetching || !gateway?.reachable}
+              disabled={qrQuery.isFetching || !qrGatewayReachable}
             >
               {qrQuery.isFetching && <LoaderCircle className="animate-spin" />}
               Refresh QR
@@ -1281,7 +1303,10 @@ function MessagesPage() {
               variant="outline"
               onClick={async () => {
                 const result = await gatewayQuery.refetch();
-                if (result.data?.sessionReady) setQrOpen(false);
+                if (result.data?.sessionReady) {
+                  setQrSessionId(null);
+                  setQrOpen(false);
+                }
               }}
               disabled={gatewayQuery.isFetching}
             >
@@ -1296,7 +1321,7 @@ function MessagesPage() {
             <DialogTitle>Set up WhatsApp</DialogTitle>
             <DialogDescription>
               {gateway?.configured
-                ? "MarryMap has the gateway details, but it cannot reach OpenWA yet."
+                ? "MarryMap cannot reach the deployed OpenWA gateway right now."
                 : "MarryMap needs its private OpenWA gateway before you can connect a WhatsApp account."}
             </DialogDescription>
           </DialogHeader>
@@ -1307,21 +1332,37 @@ function MessagesPage() {
                 "Start the local OpenWA gateway, add its server-only connection values, then restart the API."}
             </p>
           </div>
-          <ol className="space-y-2 text-sm leading-relaxed text-muted-foreground">
-            <li>
-              <span className="mr-2 font-semibold text-foreground">1.</span>
-              Start the included OpenWA source with <code>npm run whatsapp:gateway</code> from the
-              MarryMap project folder.
-            </li>
-            <li>
-              <span className="mr-2 font-semibold text-foreground">2.</span>
-              Wait until the OpenWA gateway is available at <code>localhost:2785</code>.
-            </li>
-            <li>
-              <span className="mr-2 font-semibold text-foreground">3.</span>
-              Choose Check connection, then Connect WhatsApp to scan your QR code.
-            </li>
-          </ol>
+          {gateway?.configured ? (
+            <ol className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+              <li>
+                <span className="mr-2 font-semibold text-foreground">1.</span>
+                Check that the <code>marrymap-openwa</code> Cloud Run service is healthy.
+              </li>
+              <li>
+                <span className="mr-2 font-semibold text-foreground">2.</span>
+                Confirm its URL and private API key match <code>OPENWA_BASE_URL</code> and <code>OPENWA_API_KEY</code> on <code>wedding-planner-api</code>.
+              </li>
+              <li>
+                <span className="mr-2 font-semibold text-foreground">3.</span>
+                Check the connection again, then reconnect WhatsApp to scan a new QR code.
+              </li>
+            </ol>
+          ) : (
+            <ol className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+              <li>
+                <span className="mr-2 font-semibold text-foreground">1.</span>
+                Deploy a private OpenWA gateway, or start it locally with <code>npm run whatsapp:gateway</code>.
+              </li>
+              <li>
+                <span className="mr-2 font-semibold text-foreground">2.</span>
+                Add its server-only URL and operator key to the MarryMap API environment.
+              </li>
+              <li>
+                <span className="mr-2 font-semibold text-foreground">3.</span>
+                Check the connection, then scan the QR code from WhatsApp → Linked devices.
+              </li>
+            </ol>
+          )}
           <DialogFooter className="gap-2 sm:gap-2">
             <Button
               type="button"
