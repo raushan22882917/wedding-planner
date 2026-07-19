@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getWhatsAppGatewayStatus, sendWhatsAppMessage } from "@/lib/communication.functions";
 import { saveChatVendor } from "@/lib/planner.functions";
+import { getPublicSourcePreview } from "@/lib/research.functions";
 import { vendorWhatsAppMessage, whatsappChatUrl } from "@/lib/whatsapp";
 
 type VendorCardData = {
@@ -90,6 +91,7 @@ export function RichAssistantMessage({ message }: { message: UIMessage }) {
   const workforceResult = readWorkforcePlan(budgetResult.renderedText);
   const vendorResult = readVendorCards(workforceResult.renderedText);
   const { cards, renderedText } = vendorResult;
+  const sources = collectMessageSources(message, text);
 
   return (
     <div className="space-y-4">
@@ -99,9 +101,9 @@ export function RichAssistantMessage({ message }: { message: UIMessage }) {
       )}
       {budgetResult.plan && <BudgetPlanCard plan={budgetResult.plan} />}
       {workforceResult.plan && <WorkforcePlanCard plan={workforceResult.plan} />}
-      {cards.length > 0 && <VendorCardGrid cards={cards} />}
+      {cards.length > 0 && <VendorCardGrid cards={cards} sources={sources} />}
       <MessageAttachments message={message} />
-      <MessageSources message={message} text={text} />
+      <MessageSources sources={sources} />
     </div>
   );
 }
@@ -377,7 +379,7 @@ function WorkforcePlanCard({ plan }: { plan: WorkforcePlanData }) {
   );
 }
 
-function VendorCardGrid({ cards }: { cards: VendorCardData[] }) {
+function VendorCardGrid({ cards, sources }: { cards: VendorCardData[]; sources: DisplaySource[] }) {
   const queryClient = useQueryClient();
   const gatewayFn = useServerFn(getWhatsAppGatewayStatus);
   const sendWhatsApp = useServerFn(sendWhatsAppMessage);
@@ -414,17 +416,17 @@ function VendorCardGrid({ cards }: { cards: VendorCardData[] }) {
           Choose a vendor to save their details, then contact them directly.
         </p>
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4">
         {cards.map((card, index) => (
           <VendorCard
             key={`${card.name}-${index}`}
             card={card}
+            source={sourceForCard(card, sources)}
             managedSendReady={managedSendReady}
-            sending={send.isPending && send.variables?.phone === card.phone}
-            onSendWhatsApp={() => {
-              if (!card.phone) return;
+            sendingPhone={send.isPending ? send.variables?.phone : null}
+            onSendWhatsApp={(phone) => {
               send.mutate({
-                phone: card.phone,
+                phone,
                 text: vendorWhatsAppMessage(card.name),
               });
             }}
@@ -437,19 +439,39 @@ function VendorCardGrid({ cards }: { cards: VendorCardData[] }) {
 
 function VendorCard({
   card,
+  source,
   managedSendReady,
-  sending,
+  sendingPhone,
   onSendWhatsApp,
 }: {
   card: VendorCardData;
+  source: DisplaySource | null;
   managedSendReady: boolean;
-  sending: boolean;
-  onSendWhatsApp: () => void;
+  sendingPhone: string | null | undefined;
+  onSendWhatsApp: (phone: string) => void;
 }) {
   const queryClient = useQueryClient();
   const saveVendor = useServerFn(saveChatVendor);
+  const previewSource = useServerFn(getPublicSourcePreview);
   const [imageFailed, setImageFailed] = useState(false);
   const [saved, setSaved] = useState(false);
+  const sourceUrl = source?.url ?? card.website ?? null;
+  const publicPreview = useQuery({
+    queryKey: ["public-source-preview", sourceUrl],
+    queryFn: () => previewSource({ data: { url: sourceUrl! } }),
+    enabled: Boolean(sourceUrl && (!card.imageUrl || !card.phone || !card.email || !card.mapsUrl)),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const phone = card.phone ?? publicPreview.data?.phones[0];
+  const email = card.email ?? publicPreview.data?.emails[0];
+  const website = card.website ?? sourceUrl ?? undefined;
+  const mapsUrl = card.mapsUrl ?? publicPreview.data?.mapUrl ?? mapSearchUrl(card);
+  const imageUrl = imageFailed
+    ? undefined
+    : (card.imageUrl ?? publicPreview.data?.imageUrl ?? undefined);
+  const hasDirectContact = Boolean(phone || email);
+  const sending = Boolean(phone && sendingPhone === phone);
   const save = useMutation({
     mutationFn: () =>
       saveVendor({
@@ -458,14 +480,14 @@ function VendorCard({
           category: card.category ?? null,
           city: card.location ?? null,
           price: card.price ?? null,
-          phone: card.phone ?? null,
-          email: card.email ?? null,
-          website: card.website ?? null,
+          phone: phone ?? null,
+          email: email ?? null,
+          website: website ?? null,
           summary: card.summary ?? null,
           details: [
             card.address ? `Address: ${card.address}` : "",
             card.capacity ? `Capacity: ${card.capacity}` : "",
-            card.mapsUrl ? `Map: ${card.mapsUrl}` : "",
+            mapsUrl ? `Map: ${mapsUrl}` : "",
             ...card.details,
           ]
             .filter(Boolean)
@@ -482,12 +504,7 @@ function VendorCard({
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not save this vendor."),
   });
-  const hasContact = card.phone || card.email || card.website;
-  const whatsappUrl = card.phone
-    ? whatsappChatUrl(card.phone, vendorWhatsAppMessage(card.name))
-    : null;
-  const mapsUrl = card.mapsUrl ?? mapSearchUrl(card);
-  const imageUrl = imageFailed ? undefined : card.imageUrl;
+  const whatsappUrl = phone ? whatsappChatUrl(phone, vendorWhatsAppMessage(card.name)) : null;
   const sourceLabel = card.sourceIds.length
     ? `Source-backed · [${card.sourceIds.join("][")}]`
     : "Verify before contacting";
@@ -513,16 +530,16 @@ function VendorCard({
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/80">
               {card.category ?? "Wedding venue"}
             </p>
-            <h3 className="truncate font-display text-xl leading-tight">{card.name}</h3>
+            <h3 className="break-words font-display text-xl leading-tight">{card.name}</h3>
           </div>
           {imageUrl ? (
             <span className="rounded-full border border-white/25 bg-black/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/90">
-              Source photo
+              Public profile photo
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[10px] font-medium text-white/85">
-              <ImageIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
-              No public photo
+              <ImageIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              No public photo found
             </span>
           )}
         </div>
@@ -553,10 +570,32 @@ function VendorCard({
           </ul>
         ) : null}
 
-        <div className="border-t border-border pt-3">
-          {hasContact ? (
-            <div className="flex flex-wrap gap-2">
-              {card.phone && managedSendReady ? (
+        <section
+          className="rounded-xl border border-border bg-secondary/35 p-3"
+          aria-label="Public contact details"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Public contact details
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                {hasDirectContact
+                  ? "Captured from the accessible source page. Verify before booking."
+                  : publicPreview.isFetching
+                    ? "Checking the cited public page for a profile image and contact details…"
+                    : "No public phone or email was found on the accessible source page."}
+              </p>
+            </div>
+            {source ? (
+              <span className="rounded-full bg-card px-2 py-1 text-[10px] font-medium text-muted-foreground">
+                Source {card.sourceIds[0] ? `[${card.sourceIds[0]}]` : ""}
+              </span>
+            ) : null}
+          </div>
+          {hasDirectContact ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {phone && managedSendReady ? (
                 <Button
                   type="button"
                   size="sm"
@@ -564,7 +603,7 @@ function VendorCard({
                   disabled={sending}
                   onClick={() => {
                     chooseVendor();
-                    onSendWhatsApp();
+                    onSendWhatsApp(phone);
                   }}
                 >
                   {sending ? (
@@ -584,24 +623,20 @@ function VendorCard({
                   onClick={chooseVendor}
                 />
               ) : null}
-              {card.phone ? (
-                <ContactLink href={`tel:${cleanPhone(card.phone)}`} icon={Phone} label="Call" />
+              {phone ? (
+                <ContactLink href={`tel:${cleanPhone(phone)}`} icon={Phone} label="Call" />
               ) : null}
-              {card.email ? (
-                <ContactLink href={`mailto:${card.email}`} icon={Mail} label={card.email} />
-              ) : null}
-              {card.website ? (
-                <ContactLink href={card.website} icon={Globe2} label="Website" external />
+              {email ? <ContactLink href={`mailto:${email}`} icon={Mail} label={email} /> : null}
+              {website ? (
+                <ContactLink href={website} icon={Globe2} label="Website" external />
               ) : null}
             </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground">
-              No contact details were present in the search sources.
-            </p>
-          )}
-        </div>
+          ) : sourceUrl ? (
+            <ContactLink href={sourceUrl} icon={Globe2} label="Open source page" external />
+          ) : null}
+        </section>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <Button
             type="button"
             variant="outline"
@@ -619,11 +654,20 @@ function VendorCard({
             )}
             {save.isPending ? "Saving…" : saved ? "Vendor saved" : "Choose & save"}
           </Button>
-          <span
-            className={`text-[10.5px] font-medium ${card.sourceIds.length ? "text-emerald-700" : "text-amber-700"}`}
-          >
-            {sourceLabel}
-          </span>
+          {sourceUrl ? (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Globe2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">
+                Source page{source ? ` · ${sourceDomain(source.url)}` : ""}
+              </span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          ) : null}
           {mapsUrl ? (
             <a
               href={mapsUrl}
@@ -634,6 +678,11 @@ function VendorCard({
               <MapPin className="h-3.5 w-3.5" /> View map
             </a>
           ) : null}
+          <span
+            className={`w-full text-[10.5px] font-medium ${card.sourceIds.length ? "text-emerald-700" : "text-amber-700"}`}
+          >
+            {sourceLabel}
+          </span>
         </div>
       </div>
     </article>
@@ -854,7 +903,7 @@ type DisplaySource = {
   url: string;
 };
 
-function MessageSources({ message, text }: { message: UIMessage; text: string }) {
+function collectMessageSources(message: UIMessage, text: string): DisplaySource[] {
   const partSources = message.parts
     .filter((part) => part.type === "source-url")
     .map((source) => ({
@@ -862,7 +911,18 @@ function MessageSources({ message, text }: { message: UIMessage; text: string })
       title: source.title ?? source.url,
       url: source.url,
     }));
-  const sources = uniqueSources([...partSources, ...markdownSources(text)]);
+  return uniqueSources([...partSources, ...markdownSources(text)]);
+}
+
+function sourceForCard(card: VendorCardData, sources: DisplaySource[]): DisplaySource | null {
+  for (const sourceId of card.sourceIds) {
+    const source = sources[Number(sourceId) - 1];
+    if (source) return source;
+  }
+  return null;
+}
+
+function MessageSources({ sources }: { sources: DisplaySource[] }) {
   if (sources.length === 0) return null;
 
   return (

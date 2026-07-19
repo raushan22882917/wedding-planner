@@ -33,8 +33,11 @@ interface SourceDocumentContactPreview {
   phones: string[];
 }
 
-interface MediaPreviewResponse {
+interface SourcePagePreviewResponse {
   image_url: string | null;
+  map_url: string | null;
+  emails: string[];
+  phones: string[];
 }
 
 interface DirectoryVendorRecord {
@@ -883,7 +886,7 @@ export async function searchAgentReachSources(
   const sources = uniqueSources(
     settled.flatMap((result) => (result.status === "fulfilled" ? result.value : [])),
   );
-  if (sources.length > 0) return enrichSourcesWithShowcaseImages(sources, authorization);
+  if (sources.length > 0) return enrichSourcesWithPublicPageData(sources, authorization);
   throw new Error("No Agent Reach web or YouTube sources could be retrieved.");
 }
 
@@ -954,7 +957,7 @@ async function backendRequest<T>(
   return payload.data;
 }
 
-async function enrichSourcesWithShowcaseImages(
+async function enrichSourcesWithPublicPageData(
   sources: IndexedSource[],
   authorization: string | null,
 ): Promise<IndexedSource[]> {
@@ -963,21 +966,31 @@ async function enrichSourcesWithShowcaseImages(
 
   return Promise.all(
     sources.map(async (source) => {
-      if (source.imageUrl || !sourceAllowsContactExtraction(source)) return source;
+      if (
+        !sourceAllowsContactExtraction(source) ||
+        (source.imageUrl && source.mapUrl && source.emails?.length && source.phones?.length)
+      )
+        return source;
       try {
-        const preview = await backendRequest<MediaPreviewResponse>(
+        const preview = await backendRequest<SourcePagePreviewResponse>(
           backendUrl,
           authorization,
-          "/v1/media-preview",
+          "/v1/source-preview",
           {
             method: "POST",
             body: JSON.stringify({ url: source.url }),
           },
         );
         const imageUrl = safeHttpUrl(preview.image_url);
-        return imageUrl ? { ...source, imageUrl } : source;
+        return withContactSignals({
+          ...source,
+          imageUrl: imageUrl ?? source.imageUrl,
+          mapUrl: safeHttpUrl(preview.map_url) ?? source.mapUrl,
+          emails: uniqueContactValues([...(source.emails ?? []), ...preview.emails]),
+          phones: uniqueContactValues([...(source.phones ?? []), ...preview.phones]),
+        });
       } catch {
-        // A page with no usable public Open Graph image remains a valid lead.
+        // A source can still be useful when its public page cannot be previewed.
         return source;
       }
     }),
@@ -1032,7 +1045,7 @@ async function searchSharedVendorDirectory(
         }),
       ];
     });
-    return enrichSourcesWithShowcaseImages(sources, authorization);
+    return enrichSourcesWithPublicPageData(sources, authorization);
   } catch {
     // The directory is additive. If its migration or API is not live yet,
     // continue to private indexing and live Agent Reach results.

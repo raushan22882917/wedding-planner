@@ -58,6 +58,13 @@ export interface ResearchDocument {
   updated_at: string;
 }
 
+export interface PublicSourcePreview {
+  imageUrl: string | null;
+  mapUrl: string | null;
+  emails: string[];
+  phones: string[];
+}
+
 export interface ResearchRun {
   source: ResearchSource;
   documents: ResearchDocument[];
@@ -181,6 +188,39 @@ export const startVendorResearch = createServerFn({ method: "POST" })
     const maxItems = Math.max(1, Math.min(data.maxItems ?? 6, 12));
     const run = await queueVendorResearch(context.accessToken, data.query, maxItems);
     return { sourceId: run.source.id, sourceName: run.source.name, query: run.query, job: run.job };
+  });
+
+/** Re-check a cited public page for its displayed profile image, map, phone,
+ * and email. This is used to enrich older chat cards without trusting the
+ * language model to invent any contact information. */
+export const getPublicSourcePreview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: { url: string }) => input)
+  .handler(async ({ data, context }): Promise<PublicSourcePreview> => {
+    let url: URL;
+    try {
+      url = new URL(data.url);
+    } catch {
+      throw new Error("The cited source URL is invalid.");
+    }
+    if (!/^https?:$/.test(url.protocol)) {
+      throw new Error("Only public website sources can be checked.");
+    }
+    const preview = await backendRequest<{
+      image_url: string | null;
+      map_url: string | null;
+      emails: string[];
+      phones: string[];
+    }>(context.accessToken, "/v1/source-preview", {
+      method: "POST",
+      body: JSON.stringify({ url: url.toString() }),
+    });
+    return {
+      imageUrl: preview.image_url,
+      mapUrl: preview.map_url,
+      emails: preview.emails,
+      phones: preview.phones,
+    };
   });
 
 /** Queue the first research pass from the saved wedding brief. It only reads

@@ -6,7 +6,10 @@ import { assertSafePublicUrl } from "../lib/url-safety.js";
 import { config } from "../config.js";
 import type { SourceKind } from "../types.js";
 import { authenticate } from "../services/auth.js";
-import { getShowcaseImage } from "../services/agent-reach.js";
+import {
+  getPublicPagePreview,
+  getShowcaseImage,
+} from "../services/agent-reach.js";
 import { backfillVendorDirectoryFromChatHistory } from "../services/vendor-directory-backfill.js";
 import {
   connectOpenwa,
@@ -113,6 +116,11 @@ const mediaPreviewBody = z
     url: z.string().url().max(2_000),
   })
   .strict();
+const sourcePreviewBody = z
+  .object({
+    url: z.string().url().max(2_000),
+  })
+  .strict();
 const whatsappMessageBody = z
   .object({
     phone: z.string().min(8).max(40),
@@ -155,6 +163,19 @@ function unique(values: string[], limit = 3): string[] {
   return [...new Set(values.filter(Boolean))].slice(0, limit);
 }
 
+function metadataStrings(
+  metadata: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = metadata[key];
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is string =>
+          typeof item === "string" && Boolean(item.trim()),
+      )
+    : [];
+}
+
 function previewDocument(
   document: Awaited<ReturnType<typeof listSourceDocuments>>[number],
 ) {
@@ -171,6 +192,7 @@ function previewDocument(
     )[0] ??
     null;
   const mapUrl =
+    safeHttpUrl(metadata.mapUrl) ??
     unique(
       [...raw.matchAll(/https?:\/\/[^\s)]+/gi)]
         .map((match) => safeHttpUrl(match[0]))
@@ -178,13 +200,20 @@ function previewDocument(
           Boolean(url && /(?:google\.[^/]+\/maps|maps\.apple\.com)/i.test(url)),
         ),
       1,
-    )[0] ?? null;
+    )[0] ??
+    null;
   const emails = unique(
-    raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [],
+    [
+      ...metadataStrings(metadata, "emails"),
+      ...(raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []),
+    ],
     2,
   );
   const phones = unique(
-    (raw.match(/(?:\+?\d[\d(). -]{7,}\d)/g) ?? [])
+    [
+      ...metadataStrings(metadata, "phones"),
+      ...(raw.match(/(?:\+?\d[\d(). -]{7,}\d)/g) ?? []),
+    ]
       .map((phone) => phone.replace(/\s+/g, " ").trim())
       .filter(
         (phone) =>
@@ -254,6 +283,23 @@ export const v1Routes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const body = mediaPreviewBody.parse(request.body);
       return { data: { image_url: await getShowcaseImage(body.url) } };
+    },
+  );
+
+  app.post(
+    "/source-preview",
+    { config: { rateLimit: { max: 24, timeWindow: "1 minute" } } },
+    async (request) => {
+      const body = sourcePreviewBody.parse(request.body);
+      const preview = await getPublicPagePreview(body.url);
+      return {
+        data: {
+          image_url: preview.imageUrl,
+          map_url: preview.mapUrl,
+          emails: preview.emails,
+          phones: preview.phones,
+        },
+      };
     },
   );
 

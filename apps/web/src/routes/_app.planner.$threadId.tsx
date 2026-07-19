@@ -263,7 +263,7 @@ function ChatWindow({
               generating={status === "submitted" || status === "streaming"}
             />
           ) : (
-            <div className="max-w-3xl mx-auto px-6 lg:px-10 py-8 space-y-6">
+            <div className="mx-auto max-w-4xl space-y-6 px-5 py-6 sm:px-6 lg:px-10 lg:py-8">
               {messages.length === 0 && <SearchReadyState />}
               {messages.map((m) => (
                 <MessageBubble key={m.id} message={m} />
@@ -281,7 +281,7 @@ function ChatWindow({
         </div>
 
         <div className="border-t border-border bg-background/70 backdrop-blur-xl">
-          <div className="max-w-3xl mx-auto px-6 lg:px-10 py-4">
+          <div className="mx-auto max-w-4xl px-5 py-4 sm:px-6 lg:px-10">
             <div
               className="mb-2 flex items-center gap-2 overflow-x-auto pb-0.5"
               aria-label="Wedding staffing prompts"

@@ -133,6 +133,133 @@ function showcaseImageCandidate(html: string): string | null {
   return null;
 }
 
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x2f;/gi, "/");
+}
+
+function publicEmail(value: string): string | null {
+  const email = decodeHtml(value).trim().toLocaleLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function publicPhone(value: string): string | null {
+  const decoded = decodeHtml(value)
+    .replace(/^tel:/i, "")
+    .replace(/[?#].*$/, "")
+    .trim();
+  const match = decoded.match(/\+?\d[\d().\s-]{6,}\d/);
+  if (!match) return null;
+  const phone = match[0].replace(/\s+/g, " ").trim();
+  const digits = phone.replace(/\D/g, "").length;
+  return digits >= 8 && digits <= 15 ? phone : null;
+}
+
+function uniquePublicValues(values: Array<string | null>, limit = 2): string[] {
+  const seen = new Set<string>();
+  return values
+    .flatMap((value) => {
+      if (!value) return [];
+      const key = value.replace(/\D/g, "") || value.toLocaleLowerCase();
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [value];
+    })
+    .slice(0, limit);
+}
+
+function publicContactCandidates(html: string) {
+  const mailto = [...html.matchAll(/\bmailto:([^\s"'<>?#]+)/gi)].map((match) =>
+    publicEmail(match[1] ?? ""),
+  );
+  const visibleEmails = (
+    decodeHtml(html).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []
+  ).map(publicEmail);
+  const phoneLinks = [
+    ...html.matchAll(/\bhref\s*=\s*["']?tel:([^\s"'<>?#]+)/gi),
+  ].map((match) => publicPhone(match[1] ?? ""));
+  const readableText = decodeHtml(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+  const labelledPhones = [
+    ...readableText.matchAll(
+      /(?:phone|mobile|call|whats?app|tel(?:ephone)?|contact(?:\s+number)?|reach\s+us)\D{0,40}(\+?\d[\d().\s-]{7,}\d)/gi,
+    ),
+  ].map((match) => publicPhone(match[1] ?? ""));
+  const indianMobiles = (
+    readableText.match(/(?<!\d)(?:\+91[\s-]?)?[6-9]\d{9}(?!\d)/g) ?? []
+  ).map(publicPhone);
+  const mapCandidate = [...decodeHtml(html).matchAll(/https?:\/\/[^\s"'<>]+/gi)]
+    .map((match) => match[0].replace(/[),.;]+$/, ""))
+    .find((url) =>
+      /(?:google\.[^/]+\/maps|maps\.apple\.com|goo\.gl\/maps)/i.test(url),
+    );
+
+  return {
+    emails: uniquePublicValues([...mailto, ...visibleEmails]),
+    phones: uniquePublicValues([
+      ...phoneLinks,
+      ...labelledPhones,
+      ...indianMobiles,
+    ]),
+    mapCandidate: mapCandidate ?? null,
+  };
+}
+
+async function safePageUrl(
+  value: string | null,
+  baseUrl: string,
+): Promise<string | null> {
+  if (!value) return null;
+  try {
+    const candidate = new URL(value, baseUrl).toString();
+    return (
+      await assertSafePublicUrl(
+        candidate,
+        config.SCRAPER_ALLOWED_HOSTS,
+        config.SCRAPER_TIMEOUT_MS,
+      )
+    ).toString();
+  } catch {
+    return null;
+  }
+}
+
+export type PublicPagePreview = {
+  imageUrl: string | null;
+  emails: string[];
+  phones: string[];
+  mapUrl: string | null;
+};
+
+/**
+ * Extracts only public, page-owned profile and contact data. The scraper never
+ * guesses a phone number or email: the value must be present in the public
+ * HTML or a linked contact control on the source page.
+ */
+export async function getPublicPagePreview(
+  rawUrl: string,
+): Promise<PublicPagePreview> {
+  const target = await assertSafePublicUrl(
+    rawUrl,
+    config.SCRAPER_ALLOWED_HOSTS,
+    config.SCRAPER_TIMEOUT_MS,
+  );
+  const page = await fetchText(target.toString(), true);
+  const contacts = publicContactCandidates(page.text);
+  const imageUrl = await safePageUrl(
+    showcaseImageCandidate(page.text),
+    page.url,
+  );
+  const mapUrl = await safePageUrl(contacts.mapCandidate, page.url);
+  return { imageUrl, emails: contacts.emails, phones: contacts.phones, mapUrl };
+}
+
 /**
  * Reads the page-owned Open Graph/Twitter image used for a public showcase.
  * The page and image URLs are both checked against the scraper's public-URL
@@ -140,28 +267,7 @@ function showcaseImageCandidate(html: string): string | null {
  * request.
  */
 export async function getShowcaseImage(rawUrl: string): Promise<string | null> {
-  const target = await assertSafePublicUrl(
-    rawUrl,
-    config.SCRAPER_ALLOWED_HOSTS,
-    config.SCRAPER_TIMEOUT_MS,
-  );
-  const page = await fetchText(target.toString(), true);
-  const candidate = showcaseImageCandidate(page.text);
-  if (!candidate) return null;
-
-  let imageUrl: string;
-  try {
-    imageUrl = new URL(candidate, page.url).toString();
-  } catch {
-    return null;
-  }
-
-  const safeImage = await assertSafePublicUrl(
-    imageUrl,
-    config.SCRAPER_ALLOWED_HOSTS,
-    config.SCRAPER_TIMEOUT_MS,
-  );
-  return safeImage.toString();
+  return (await getPublicPagePreview(rawUrl)).imageUrl;
 }
 
 export async function readWebPage(rawUrl: string): Promise<ScrapedDocument> {
@@ -171,9 +277,14 @@ export async function readWebPage(rawUrl: string): Promise<ScrapedDocument> {
     config.SCRAPER_TIMEOUT_MS,
   );
   const readerUrl = `${config.JINA_READER_BASE_URL.replace(/\/$/, "")}/${target.toString()}`;
-  const [readerPage, imageUrl] = await Promise.all([
+  const [readerPage, preview] = await Promise.all([
     fetchText(readerUrl),
-    getShowcaseImage(target.toString()).catch(() => null),
+    getPublicPagePreview(target.toString()).catch(() => ({
+      imageUrl: null,
+      emails: [],
+      phones: [],
+      mapUrl: null,
+    })),
   ]);
   const content = cleanText(readerPage.text);
   if (!content)
@@ -184,7 +295,18 @@ export async function readWebPage(rawUrl: string): Promise<ScrapedDocument> {
     url: target.toString(),
     title: cleanText(firstHeading ?? titleFromUrl(target.toString()), 500),
     content,
-    metadata: imageUrl ? { imageUrl } : undefined,
+    metadata:
+      preview.imageUrl ||
+      preview.emails.length ||
+      preview.phones.length ||
+      preview.mapUrl
+        ? {
+            ...(preview.imageUrl ? { imageUrl: preview.imageUrl } : {}),
+            ...(preview.emails.length ? { emails: preview.emails } : {}),
+            ...(preview.phones.length ? { phones: preview.phones } : {}),
+            ...(preview.mapUrl ? { mapUrl: preview.mapUrl } : {}),
+          }
+        : undefined,
   };
 }
 
