@@ -74,7 +74,7 @@ echo -e "${YELLOW}Building API container image...${NC}"
 gcloud builds submit --tag "$API_IMAGE" apps/api
 
 echo -e "${YELLOW}Building Web container image...${NC}"
-gcloud builds submit --tag "$WEB_IMAGE" --dockerfile apps/web/Dockerfile .
+gcloud builds submit --tag "$WEB_IMAGE" .
 
 # 6. Deploy OpenWA to Cloud Run
 echo -e "\n${BLUE}[4/6] Deploying OpenWA to Cloud Run...${NC}"
