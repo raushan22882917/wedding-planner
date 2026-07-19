@@ -1,3 +1,4 @@
 [submodule "apps/openwa"]
 	path = apps/openwa
 	url = https://github.com/rmyndharis/OpenWA.git
+	ignore = dirty
