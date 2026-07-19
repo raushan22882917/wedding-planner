@@ -8,7 +8,7 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/api/package.json ./apps/api/
 
 # Install dependencies for the monorepo workspace
-RUN npm install
+RUN npm ci
 
 # Copy web app sources
 COPY apps/web ./apps/web
